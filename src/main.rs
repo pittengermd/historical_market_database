@@ -1,74 +1,152 @@
-use yahoo_finance::{history, Interval, Timestamped};
-use influxdb::{Client, Query, Timestamp, ReadQuery};
-use influxdb::InfluxDbWriteable;
-use chrono::{DateTime, Utc};
-use influxdb::WriteQuery;
-use std::time::{Duration, SystemTime};
+#![deny(warnings)]
+#![warn(clippy::all, clippy::restriction, clippy::pedantic, clippy::nursery)]
+use influxdb2::write::WriteQuery;
+use influxdb2::models::Query;
+use influxdb2::Client;
+use influxdb_line_protocol::{Field, Point};
+use std::env;
+use yahoo_finance::{history, Interval};
+use anyhow::{Context, Result};
+use chrono::NaiveDateTime;
+use clap::{Parser, Subcommand};
+use influxdb2_structmap::FromMap;
 
-#[derive(Debug)]
-struct BarWrapper {
-   bar: yahoo_finance::Bar, 
+
+/// Search for a pattern in a file and display the lines that contain it.
+#[derive(Parser, Debug)]
+#[clap(about, version, author)]
+struct Cli {
+    /// Operation to perform on database
+    #[clap(subcommand)]
+    op: Operation,
+
+    /// Start data for stock price search
+    #[clap(short = 'b', long)]
+    start: String,
+
+    /// End data for stock price search
+    #[clap(short = 'e', long)]
+    end: String,
+
+    /// Stock symbol ticker to lookup prices for
+    #[clap(short = 's', long)]
+    symbol: String,
 }
 
-impl From<yahoo_finance::Bar> for BarWrapper {
-   fn from(item: yahoo_finance::Bar) -> Self {
-      BarWrapper { bar: item}
+#[derive(Subcommand, Debug)]
+enum Operation {
+    Max,
+    Min,
+}
+
+#[derive(Debug, influxdb2_structmap_derive::FromMap, Default)]
+struct Test(f32);
+
+async fn query_database(
+    client: Client,
+    op: &Operation,
+    symbol: &str,
+    start_date: NaiveDateTime,
+    end_date: NaiveDateTime,
+) -> Result<f32, Box<dyn std::error::Error>> {
+    let mut qs = format!(
+        "from(bucket: \"stock-prices\") 
+        |> range(start: {}, end: {})
+        |> filter(fn: (r) => r.ticker == \"{}\")",
+        symbol,
+        start_date.timestamp_millis(),
+        end_date.timestamp_millis()
+    );
+    match op {
+        Operation::Max => {
+            println!(
+                "Searching for {:?} highest close price between {:?} and {:?}",
+                symbol, start_date, end_date
+            );
+            qs.push_str("|> max()");
+        }
+        Operation::Min => {
+            println!(
+                "Searching for {:?} lowest close price between {:?} and {:?}",
+                symbol, start_date, end_date
+            );
+            qs.push_str("|> min()");
+        }
+    }
+    let query = Query::new(qs.to_string());
+    let res: Vec<Test> = client.query(Some(query)).await
+    .with_context(|| format!("failed to query database for {:?} value", op))?;
+    Ok(res[0].0)
+}
+
+fn connect_to_influxdb(host: &str, org: &str, token: &str) -> Result<Client, Box<dyn std::error::Error>> {
+   Ok(Client::new(host, org.clone(), token)?)
+}
+
+async fn get_symbol_data(symbol: &str, interval: Interval) -> Result<Vec<yahoo_finance::Bar>, Box<dyn std::error::Error>> {
+   Ok(history::retrieve_interval(symbol, interval).await?)
+}
+
+async fn get_symbol_list_data(symbols: &[String], intervals: &[Interval]) -> Result<Vec<Vec<yahoo_finance::Bar>>, Box<dyn std::error::Error>> {
+   let mut symbols_data: Vec<Vec<yahoo_finance::Bar>> = Vec::with_capacity(symbols.len());
+   for (symbol, interval) in symbols.iter().zip(intervals) {
+      symbols_data.push(get_symbol_data(symbol, *interval).await?)
    }
+   Ok(symbols_data)
 }
-
-impl From<&yahoo_finance::Bar> for BarWrapper {
-   fn from(item: &yahoo_finance::Bar) -> Self {
-      BarWrapper { bar: *item}
-   }
-}
-
-impl From<&mut yahoo_finance::Bar> for BarWrapper {
-   fn from(item: &mut yahoo_finance::Bar) -> Self {
-      BarWrapper { bar: *item}
-   }
-}
-
-impl InfluxDbWriteable for BarWrapper {
-   fn into_query<I: Into<String>>(self, name: I) -> WriteQuery {
-      WriteQuery::new(Timestamp::Hours(1), name.into())
-   }
-}
-
-
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>>{
-    // Connect to db `historical_market_data` on `http://localhost:8086`
-    let client = Client::new("http://localhost:8086", "historical_market_data")
-                  .with_auth("pittengermdp", "ST@rred040!20!!");
-    let (build_type, version_num) = client.ping().await?;
-    println!("{:?}, {:?}", build_type, version_num);
-    
-    let data = history::retrieve_interval("AAPL", Interval::_6mo).await.unwrap();
-    
-    let data_wrapper: Vec<BarWrapper> = data
-                        .iter()
-                        .map(|bar| bar.into())
-                        .collect();
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+   let args = Cli::parse();
 
+   let start_date =
+       NaiveDateTime::parse_from_str(&args.start, "%Y-%m-%d %H:%M:%S").with_context(|| {
+           format!(
+               "could not convert {:?} to YYYY-MM-DD HH:MM:SS format",
+               &args.start
+           )
+       })?;
+   let end_date =
+       NaiveDateTime::parse_from_str(&args.end, "%Y-%m-%d %H:%M:%S").with_context(|| {
+           format!(
+               "could not convert {:?} to YYYY-MM-DD HH:MM:SS format",
+               &args.end
+           )
+       })?;
 
-   for wrapper in data_wrapper {
-      let write_result = client
-      .query(wrapper.into_query("bars")
-               .add_field("bar", wrapper)
-      )
-      
-      .await?;
-      //assert!(write_result.is_ok(), "Write result was not okay");
+    let host = env::var("INFLUX_HOST").unwrap_or("http://localhost:8086".into());
+    let org = env::var("INFLUX_ORG").unwrap_or("example-org".into());
+    let token = env::var("INFLUX_TOKEN").unwrap_or(
+        "iPRI-RQKTiCjnjXV3lFaMbnR8lg3h43-HmHjlZkKYF1XzKdviyl4sOP2xl_h53YOSDaUIhi0NNdZDqYTrXpqXw=="
+            .into(),
+    );
+    let bucket = env::var("INFLUX_BUCKET").unwrap_or("test".into());
 
-      // Let's see if the data we wrote is there
-      let read_query = ReadQuery::new("SELECT * FROM bars");
+    let client = connect_to_influxdb(&host, &org, &token)?;
+    let interval = vec![Interval::_6mo];
+    let symbol = vec!["AAPL".to_string()];
+    let data_vec = get_symbol_list_data(&symbol, &interval).await?;
 
-      let read_result = client.query(read_query).await;
-      assert!(read_result.is_ok(), "Read result was not ok");
-      println!("{}", read_result.unwrap());
-    }  
-    
-    
+    for bar_vec in data_vec {
+      for bar in bar_vec {
+         let fields = vec![
+            Field::new("open", bar.open).expect("Failed to create open field"),
+            Field::new("high", bar.high).expect("Failed to create high field"),
+            Field::new("low", bar.low).expect("Failed to create low field"),
+            Field::new("close", bar.close).expect("Failed to create close field"),
+            Field::new("volume", bar.volume.expect("No Volume Data"))
+                .expect("Failed to create volume field"),
+        ];
+        let point = Point::builder(bar.timestamp.to_string())
+            .unwrap()
+            .add_fields(fields)
+            .build()
+            .unwrap();
+
+        let query = WriteQuery::with_org(&bucket, &org);
+        let _result = client.clone().write(point, query).await?;
+      }        
+    }
+
     Ok(())
 }
