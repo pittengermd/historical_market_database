@@ -1,17 +1,17 @@
 //#![deny(warnings)]
 //#![warn(clippy::all, clippy::restriction, clippy::pedantic, clippy::nursery)]
 use anyhow::{Context, Result};
-use chrono::NaiveDateTime;
 use clap::{Parser, Subcommand};
-//use influxdb2::models::Query;
-use influxdb2::Client;
-use influxdb2_structmap::FromMap;
-use std::env;
-use yahoo_finance::{history, Interval};
+
 use futures::prelude::*;
-use influxdb2::models::DataPoint;
-use influxdb2::models::Query;
-use yahoo_finance::Timestamped;
+use influxdb::InfluxDbWriteable;
+use influxdb::{Client, ReadQuery, WriteQuery};
+use std::env;
+use yahoo_finance::{history, Interval, Timestamped};
+
+use chrono::{DateTime, NaiveDateTime, Utc};
+use serde::{Deserialize, Serialize};
+
 /// Search for a pattern in a file and display the lines that contain it.
 #[derive(Parser, Debug)]
 #[clap(about, version, author)]
@@ -39,13 +39,67 @@ enum Operation {
     Min,
 }
 
-#[derive(Debug, influxdb2_structmap_derive::FromMap, Default)]
-pub struct StockPrice {
-   ticker: String,
-   value: f64,
-   time: i64,
+#[derive(Debug, InfluxDbWriteable, Serialize, Deserialize)]
+struct StockPrice {
+    time: DateTime<Utc>,
+    open: f64,
+    high: f64,
+    low: f64,
+    close: f64,
+    volume: Option<u64>,
+    #[influxdb(tag)]
+    symbol: String,
 }
 
+#[derive(Debug)]
+struct BarWrapper(String, yahoo_finance::Bar);
+
+impl From<(String, yahoo_finance::Bar)> for BarWrapper {
+    fn from(pair: (String, yahoo_finance::Bar)) -> Self {
+        BarWrapper(pair.0, pair.1)
+    }
+}
+
+impl From<(String, &yahoo_finance::Bar)> for BarWrapper {
+    fn from(bar: (String, &yahoo_finance::Bar)) -> Self {
+        BarWrapper(bar.0, *bar.1)
+    }
+}
+
+impl Default for BarWrapper {
+    fn default() -> Self {
+        Self(
+            String::default(),
+            yahoo_finance::Bar {
+                timestamp: Default::default(),
+                open: Default::default(),
+                high: Default::default(),
+                low: Default::default(),
+                close: Default::default(),
+                volume: Default::default(),
+            },
+        )
+    }
+}
+
+impl InfluxDbWriteable for BarWrapper {
+    fn into_query<I: Into<String>>(self, name: I) -> WriteQuery {
+        WriteQuery::new(
+            influxdb::Timestamp::Milliseconds(
+                <u128 as TryFrom<i64>>::try_from(self.1.timestamp)
+                    .expect("Could not convert i64 to u128"),
+            ),
+            name.into(),
+        )
+        .add_field("open", self.1.open)
+        .add_field("high", self.1.high)
+        .add_field("low", self.1.low)
+        .add_field("close", self.1.close)
+        .add_field("volume", self.1.volume)
+        .add_tag("symbol", self.0)
+    }
+}
+/*
 async fn query_database(
     client: Client,
     op: &Operation,
@@ -54,12 +108,15 @@ async fn query_database(
     start_date: NaiveDateTime,
     end_date: NaiveDateTime,
 ) -> Result<f64, Box<dyn std::error::Error>> {
-   let qs = format!("from(bucket: \"test1\") 
+    let qs = format!(
+        "from(bucket: \"test1\")
    |> range(start: -1w)
-   |> filter(fn: (r) => r.ticker == \"{}\") 
+   |> filter(fn: (r) => r.ticker == \"{}\")
    |> last()
-", "AAPL");
-/*
+",
+        symbol
+    );
+
     let mut qs = format!(
         "from(bucket: {})
         |> range(start: {}, end: {})
@@ -69,9 +126,9 @@ async fn query_database(
         start_date.timestamp_millis(),
         end_date.timestamp_millis()
     );
-    
+
     println!("Query suggestions are: {:#?}", client.query_suggestions().await?);
-    
+
     match op {
         Operation::Max => {
             println!(
@@ -87,23 +144,15 @@ async fn query_database(
             );
             qs.push_str("|> min()");
         }
-    }*/
+    }
     let query = Query::new(qs.to_string());
-    let res: Vec<StockPrice> = client.query::<StockPrice>(Some(query))
-        .await?;
-   println!("result is: {:?}", res);
+    let res: Vec<StockPrice> = client.query::<StockPrice>(Some(query)).await?;
+    println!("result is: {:?}", res);
     //Ok(res[0].1.high)
+
     Ok(1.0)
 }
 
-
-fn connect_to_influxdb(
-    host: &str,
-    org: &str,
-    token: &str,
-) -> Result<Client, Box<dyn std::error::Error>> {
-    Ok(Client::new(host, org.clone(), token))
-}
 
 async fn get_symbol_data(
     symbol: &str,
@@ -122,10 +171,10 @@ async fn get_symbol_list_data(
     }
     Ok(symbols_data)
 }
+*/
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-   
     let args = Cli::parse();
 
     let start_date =
@@ -143,24 +192,64 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             )
         })?;
 
-    let host = env::var("INFLUX_HOST").unwrap_or("http://localhost:8086".into());
-    let org = env::var("INFLUX_ORG").unwrap_or("example-org".into());
+    let host =
+        env::var("INFLUX_HOST").unwrap_or("https://us-east-1-1.aws.cloud2.influxdata.com".into());
+    let org = env::var("INFLUX_ORG").unwrap_or("test".into());
     let token = env::var("INFLUX_TOKEN").unwrap_or(
-        "iPRI-RQKTiCjnjXV3lFaMbnR8lg3h43-HmHjlZkKYF1XzKdviyl4sOP2xl_h53YOSDaUIhi0NNdZDqYTrXpqXw=="
+        "ktA-cBpdbqfGNdGs5KiZ3JYk4uE5TxtsnfHu6HGnM109vVG323J-J-5VnBFZA0KlAjsFmosmRpKJgJni_gi9ww=="
             .into(),
     );
-    let bucket = env::var("INFLUX_BUCKET").unwrap_or("test1".into());
+    let bucket = env::var("INFLUX_BUCKET").unwrap_or("g".into());
 
-    let client = connect_to_influxdb(&host, &org, &token)?;
-    let interval = Interval::_6mo;
-    let symbols = vec!["AAPL".to_string()];
-    let data_vec = get_symbol_list_data(&symbols, interval).await?;
-    let mut symbol_iter = symbols.iter();
-    
-    println!("HealthCheck: {:#?}", client.health().await?);
+    let client =
+        Client::new("https://us-east-1-1.aws.cloud2.influxdata.com", &bucket).with_token(&token);
+    println!("database_name is: {:?}", client.database_name());
+    let (build_name, version_num) = client.ping().await?;
+    println!(
+        "Build Name: {:?}\nVersion Num is: {:?}",
+        build_name, version_num
+    );
+
+    //let interval = Interval::_6mo;
+    //let symbols = vec!["AAPL".to_string()];
+    //let data_vec = get_symbol_list_data(&symbols, interval).await?;
+    //let mut symbol_iter = symbols.iter();
+    /*
+    let data = history::retrieve_interval("AAPL", Interval::_6mo)
+        .await
+        .unwrap();
+    let data_wrapper: Vec<BarWrapper> = data
+        .iter()
+        .map(|d| BarWrapper::from(("AAPL".to_string(), d)))
+        .collect();
+
+    println!("Downloaded {} bars", data_wrapper.len());
+    let write_time = std::time::Instant::now();
+    for wrapper in data_wrapper {
+        let write_result = client.query(&wrapper.into_query(&bucket)).await?;
+    }
+    println!("Writing took: {:?}", write_time.elapsed().as_secs());
+    */
+
+    // Let's see if the data we wrote is there
+    let qs = format!("SELECT * FROM {} WHERE time >= '{}' and time < '{}'", bucket, start_date, end_date);
+    let read_query = ReadQuery::new(qs.to_string());
+
+    let read_time = std::time::Instant::now();
+    let mut db_result = client.json_query(read_query).await?;
+    let _result = db_result
+        .deserialize_next::<StockPrice>()?
+        .series
+        .into_iter()
+        .map(|i| i.values)
+        .collect::<Vec<_>>();
+    println!("Reading took: {:?}", read_time.elapsed().as_secs());
+    println!("Result is: {:?}", _result);
+    println!("Read {:?} bars", _result[0].len());
+
     /*
     for bar_vec in &data_vec {
-      let mut points: Vec<DataPoint> = Vec::with_capacity(bar_vec.len()); 
+      let mut points: Vec<DataPoint> = Vec::with_capacity(bar_vec.len());
       let symbol = symbol_iter.next();
       println!("Number of symbols in data_vec is {}", &data_vec.len());
 
@@ -179,17 +268,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
          );
      }
       println!("Writing {} bars", points.len());
-      */
-      let points: Vec<DataPoint> = vec![ DataPoint::builder("bar")
-      //bar timestamp is in millis, influxdb stores timestamp as nano
-      .tag("ticker", "AAPL")
-      .field("time", 0)
-      .field("value", 123.45)
-      .build()?, ];
-      client.write(&bucket, stream::iter(points)).await?;
+
+    let points: Vec<DataPoint> = vec![DataPoint::builder("bar")
+        //bar timestamp is in millis, influxdb stores timestamp as nano
+        .tag("ticker", "AAPL")
+        .field("value", 123.46)
+        .field("open", 200.0)
+        .field("time", 0)
+        .build()?];
+    client.write(&bucket, stream::iter(points)).await?;
     //}
-    let max = query_database(client, &args.op, &bucket, &args.symbol, start_date, end_date).await?;
+    let max = query_database(
+        client,
+        &args.op,
+        &bucket,
+        &args.symbol,
+        start_date,
+        end_date,
+    )
+    .await?;
     println!("Max price in interval is: {}", max);
+    */
 
     Ok(())
 }
