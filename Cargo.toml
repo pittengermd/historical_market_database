@@ -6,14 +6,13 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [dependencies]
 tokio = { version = "1.20.0", features = [ "full" ]}
-#influxdb = { version = "*",features = ["derive"] }
-influxdb2 = { version = "*", path = "../influxdb2" }
 chrono = "*"
 yahoo-finance = { version = "*", path = "./yahoo-finance-rs"}
-influxdb-line-protocol = { git = "https://github.com/xoac/influxdb-line-protocol" }
 futures = "*"
 clap = { version = "*", features = ["derive"] }
 anyhow = "*"
+#influxdb2_client = { version = "*", git = "https://github.com/influxdata/influxdb_iox.git" }
+influxdb2 = "*"
 influxdb2-structmap = "*"
 influxdb2-structmap-derive ="*"
 
