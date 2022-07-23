@@ -1,5 +1,7 @@
 #![deny(warnings)]
 #![warn(clippy::all, clippy::pedantic, clippy::nursery)]
+#![feature(str_split_as_str, str_split_whitespace_as_str)]
+
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 
@@ -198,9 +200,30 @@ async fn get_symbol_list_data(
 ) -> Result<Vec<Vec<yahoo_finance::Bar>>, Box<dyn std::error::Error>> {
     let mut symbols_data: Vec<Vec<yahoo_finance::Bar>> = Vec::with_capacity(symbols.len());
     for symbol in symbols.iter() {
+        println!("Symbol is: {:?}", symbol);
         symbols_data.push(get_symbol_data(symbol, interval).await?);
     }
     Ok(symbols_data)
+}
+
+fn get_all_stock_symbols(path: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    use std::fs::File;
+    use std::io::{BufRead, BufReader};
+    let lines = BufReader::new(File::open(path)?)
+        .lines()
+        .skip(1)
+        .map(|x| x.unwrap())
+        .collect::<Vec<String>>()
+        .join("\n");
+    let stock_symbols: Vec<String> = lines.lines().map(|line| {
+        line.split(',')
+            .step_by(11)
+            .map(|symbol| symbol.to_string())
+            .collect()
+    })
+    .collect();
+    //println!("{:#?}", stock_symbols);
+    Ok(stock_symbols)
 }
 
 #[tokio::main]
@@ -235,28 +258,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     //if not we will bail here
     let (_build_name, _version_num) = client.ping().await?;
     let interval = Interval::_6mo;
-    let symbols = vec!["AAPL".to_string(), "MSFT".to_string()];
-    let data_vec = get_symbol_list_data(&symbols, interval).await?;
+    let symbols = get_all_stock_symbols("nasdaq_screener_1658367185632.csv")?;
+    let _data_vec = get_symbol_list_data(&symbols, interval).await?;
+    /*
 
-    //Need to implement influxdb2 api to allow for streaming datapoints to the database, much faster
-    {
-        let mut symbol_iter = symbols.iter();
-        for bar_vec in &data_vec {
-            let symbol = symbol_iter.next();
-            println!("Number of symbols in data_vec is {}", &data_vec.len());
-            println!("Symbol is:  {:?}", symbol);
-            for bar in bar_vec {
-                client
-                    .clone()
-                    .query(
-                        &BarWrapper::from((symbol.expect("Symbol Bar mismatch").clone(), bar))
-                            .into_query(&bucket),
-                    )
-                    .await?;
+        //Need to implement influxdb2 api to allow for streaming datapoints to the database, much faster
+        {
+            let mut symbol_iter = symbols.iter();
+            for bar_vec in &data_vec {
+                let symbol = symbol_iter.next();
+                println!("Number of symbols in data_vec is {}", &data_vec.len());
+                println!("Symbol is:  {:?}", symbol);
+                for bar in bar_vec {
+                    client
+                        .clone()
+                        .query(
+                            &BarWrapper::from((symbol.expect("Symbol Bar mismatch").clone(), bar))
+                                .into_query(&bucket),
+                        )
+                        .await?;
+                }
             }
         }
-    }
-
+    */
     let result = query_database(
         client.clone(),
         &args.op,
@@ -327,7 +351,7 @@ mod tests {
                 let symbol = symbol_iter.next();
                 println!("Number of symbols in data_vec is {}", &data_vec.len());
                 println!("Symbol is:  {:?}", symbol);
-                
+
                 for bar in bar_vec {
                     client
                         .clone()
@@ -349,7 +373,16 @@ mod tests {
             NaiveDateTime::parse_from_str("2022-07-12 00:00:00", "%Y-%m-%d %H:%M:%S")?,
         )
         .await?;
-        assert_eq!(result, (DateTime::<Utc>::from_utc(NaiveDateTime::parse_from_str("2022-06-14 13:30:00", "%Y-%m-%d %H:%M:%S")?, Utc), 241.5099945068359));
+        assert_eq!(
+            result,
+            (
+                DateTime::<Utc>::from_utc(
+                    NaiveDateTime::parse_from_str("2022-06-14 13:30:00", "%Y-%m-%d %H:%M:%S")?,
+                    Utc
+                ),
+                241.5099945068359
+            )
+        );
         Ok(())
     }
     #[tokio::test]
@@ -373,7 +406,7 @@ mod tests {
                 let symbol = symbol_iter.next();
                 println!("Number of symbols in data_vec is {}", &data_vec.len());
                 println!("Symbol is:  {:?}", symbol);
-                
+
                 for bar in bar_vec {
                     client
                         .clone()
@@ -396,7 +429,16 @@ mod tests {
         )
         .await?;
         println!("{:#?}", result);
-        assert_eq!(result, (DateTime::<Utc>::from_utc(NaiveDateTime::parse_from_str("2022-07-07 13:30:00", "%Y-%m-%d %H:%M:%S")?, Utc), 269.05999755859375));
+        assert_eq!(
+            result,
+            (
+                DateTime::<Utc>::from_utc(
+                    NaiveDateTime::parse_from_str("2022-07-07 13:30:00", "%Y-%m-%d %H:%M:%S")?,
+                    Utc
+                ),
+                269.05999755859375
+            )
+        );
         Ok(())
     }
 }
