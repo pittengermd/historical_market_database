@@ -14,3 +14,4 @@ anyhow = "*"
 influxdb = { version = "*", path = "../influxdb-rust/influxdb", features = ["derive", "use-serde", "curl-client"]}
 serde = "*"
 serde_json = "*"
+rayon = "*"
