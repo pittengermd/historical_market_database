@@ -233,7 +233,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let interval = Interval::_6mo;
     let symbols = vec!["AAPL".to_string(), "MSFT".to_string()];
     let _data_vec = get_symbol_list_data(&symbols, interval).await?;
-    /*
+    
     //Need to implement influxdb2 api to allow for streaming datapoints to the database, much faster
     {
         let mut symbol_iter = symbols.iter();
@@ -252,7 +252,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
-    */
+    
 
     let result = query_database(
         client.clone(),
