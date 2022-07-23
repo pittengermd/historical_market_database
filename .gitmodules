@@ -1,3 +1,6 @@
 [submodule "yahoo-finance-rs"]
 	path = yahoo-finance-rs
 	url = https://github.com/pittengermd/yahoo-finance-rs.git
+[submodule "influxdb-rust"]
+	path = influxdb-rust
+	url = https://github.com/pittengermd/influxdb-rust.git

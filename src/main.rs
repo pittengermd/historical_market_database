@@ -102,7 +102,7 @@ impl InfluxDbWriteable for BarWrapper {
 }
 
 //This function will query the database for the provided operation, currently only MAX or MIN
-// Need to change query so that it returns that entire struct back at the matching point so that 
+// Need to change query so that it returns that entire struct back at the matching point so that
 // the query return type is always the same.  OR make the deserializing smarter so that it knows
 // what it should expect to receive
 async fn query_database(
@@ -112,39 +112,52 @@ async fn query_database(
     symbol: &str,
     start_date: NaiveDateTime,
     end_date: NaiveDateTime,
-) -> Result<Vec<f64>, Box<dyn std::error::Error>> {
+) -> Result<f64, Box<dyn std::error::Error>> {
     let qs = format!(
-        "SELECT * FROM {} WHERE time >= '{}' and time < '{}' and \"symbol\" = '{}'",
+        "SELECT MAX(high) FROM {} WHERE time >= '{}' and time < '{}' and \"symbol\" = '{}'",
         bucket, start_date, end_date, symbol
     );
     let read_query = ReadQuery::new(qs.to_string());
     let mut db_result = client.json_query(read_query).await?;
 
-    let result: Vec<f64> = match op {
+    let result: f64 = match op {
         Operation::Max => {
             println!(
                 "Searching for {:?} highest close price between {:?} and {:?}",
                 symbol, start_date, end_date
             );
 
-         db_result
-                .deserialize_next::<StockPrice>()?
+            #[derive(Serialize, Deserialize)]
+            struct MaxResult {
+                max_high: f64,
+            }
+
+            println!("{:#?}", db_result);
+            let test = db_result
+                .deserialize_next::<MaxResult>()?
                 .series
                 .into_iter()
-                .map(|i| i.values[0].high)
-                .collect::<Vec<_>>()
+                .map(|i| i.values[0].max_high)
+                .collect::<Vec<_>>();
+                test[0]
+                
         }
         Operation::Min => {
             println!(
                 "Searching for {:?} lowest close price between {:?} and {:?}",
                 symbol, start_date, end_date
             );
-            db_result
-                .deserialize_next::<StockPrice>()?
+            #[derive(Serialize, Deserialize)]
+            struct MinResult {
+                min_low: f64,
+            }
+            let test = db_result
+                .deserialize_next::<MinResult>()?
                 .series
                 .into_iter()
-                .map(|i| i.values[0].low)
-                .collect::<Vec<_>>()
+                .map(|i| i.values[0].min_low)
+                .collect::<Vec<_>>();
+                test[0]
         }
     };
     Ok(result)
@@ -189,20 +202,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             )
         })?;
 
-    let host =
-        env::var("INFLUX_HOST").expect("Please set INFLUX_HOST environment variable to your influxDB token");
-    //let _org = env::var("INFLUX_ORG").expect("Please set INFLUX_ORG environment variable to your influxDB token");
-    let token = env::var("INFLUX_TOKEN").expect("Please set INFLUX_TOKEN environment variable to your influxDB token");
-    let bucket = env::var("INFLUX_BUCKET").expect("Please set INFLUX_BUCKET environment variable to your influxDB token");
-    let client =
-        Client::new(host, &bucket).with_token(&token);
+    let host = env::var("INFLUX_HOST")
+        .expect("Please set INFLUX_HOST environment variable to your influxDB token");
+    let token = env::var("INFLUX_TOKEN")
+        .expect("Please set INFLUX_TOKEN environment variable to your influxDB token");
+    let bucket = env::var("INFLUX_BUCKET")
+        .expect("Please set INFLUX_BUCKET environment variable to your influxDB token");
+    let client = Client::new(host, &bucket).with_token(&token);
     //Health check to see if we can at least communicate with database
     //if not we will bail here
-    let (_build_name, _version_num) = client.ping().await?;   
+    let (_build_name, _version_num) = client.ping().await?;
     let interval = Interval::_6mo;
     let symbols = vec!["AAPL".to_string(), "MSFT".to_string()];
-    let data_vec = get_symbol_list_data(&symbols, interval).await?;
+    let _data_vec = get_symbol_list_data(&symbols, interval).await?;
 
+    /*
     //Need to implement influxdb2 api to allow for streaming datapoints to the database, much faster
     {
         let mut symbol_iter = symbols.iter();
@@ -219,17 +233,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .await?;
             }
         }
-    }   
+    }
+    */
 
     let result = query_database(
-      client.clone(),
-      &args.op,
-      &bucket,
-      &args.symbol,
-      start_date,
-      end_date,
-  )
-  .await?;
-  println!("Op result is: {:?}", result);
+        client.clone(),
+        &args.op,
+        &bucket,
+        &args.symbol,
+        start_date,
+        end_date,
+    )
+    .await?;
+    println!("Op result is: {:?}", result);
     Ok(())
 }
