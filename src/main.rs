@@ -112,12 +112,19 @@ async fn query_database(
     symbol: &str,
     start_date: NaiveDateTime,
     end_date: NaiveDateTime,
-) -> Result<f64, Box<dyn std::error::Error>> {
-    let result: f64 = match op {
+) -> Result<(DateTime<Utc>, f64), Box<dyn std::error::Error>> {
+    let result: (DateTime<Utc>, f64) = match op {
         Operation::Max => {
             #[derive(Serialize, Deserialize)]
             struct MaxResult {
+                time: DateTime<Utc>,
                 max: f64,
+            }
+
+            impl From<&MaxResult> for (DateTime<Utc>, f64) {
+                fn from(pair: &MaxResult) -> Self {
+                    (pair.time, pair.max)
+                }
             }
             println!(
                 "Searching for {:?} highest close price between {:?} and {:?}",
@@ -140,12 +147,18 @@ async fn query_database(
                 .values
                 .first()
                 .expect("Could not get entry from result values")
-                .max
+                .into()
         }
         Operation::Min => {
             #[derive(Serialize, Deserialize)]
             struct MinResult {
+                time: DateTime<Utc>,
                 min: f64,
+            }
+            impl From<&MinResult> for (DateTime<Utc>, f64) {
+                fn from(pair: &MinResult) -> Self {
+                    (pair.time, pair.min)
+                }
             }
             println!(
                 "Searching for {:?} lowest close price between {:?} and {:?}",
@@ -167,7 +180,7 @@ async fn query_database(
                 .values
                 .first()
                 .expect("Could not get entry from result values")
-                .min
+                .into()
         }
     };
     Ok(result)
