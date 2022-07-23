@@ -194,21 +194,23 @@ async fn get_symbol_data(
 }
 
 //This function gets all the bars for a given interval for all the provided symbols
+//If get_symbol_data returns an error, the symbol is just discarded.
 async fn get_symbol_list_data(
     symbols: &[String],
     interval: Interval,
 ) -> Result<Vec<Vec<yahoo_finance::Bar>>, Box<dyn std::error::Error>> {
     let mut symbols_data: Vec<Vec<yahoo_finance::Bar>> = Vec::with_capacity(symbols.len());
     for symbol in symbols.iter() {
-        println!("Symbol is: {:?}", symbol);
-        symbols_data.push(get_symbol_data(symbol, interval).await?);
+        if let Ok(symbol_data) = get_symbol_data(symbol, interval).await {
+         symbols_data.push(symbol_data);
+        };
     }
     Ok(symbols_data)
 }
 
 fn get_all_stock_symbols(path: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     use std::fs::File;
-    use std::io::{BufRead, BufReader, Write};
+    use std::io::{BufRead, BufReader};
     let lines = BufReader::new(File::open(path)?)
         .lines()
         .skip(1)
