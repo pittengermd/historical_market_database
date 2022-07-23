@@ -113,51 +113,55 @@ async fn query_database(
     start_date: NaiveDateTime,
     end_date: NaiveDateTime,
 ) -> Result<f64, Box<dyn std::error::Error>> {
-    let qs = format!(
-        "SELECT MAX(high) FROM {} WHERE time >= '{}' and time < '{}' and \"symbol\" = '{}'",
-        bucket, start_date, end_date, symbol
-    );
-    let read_query = ReadQuery::new(qs.to_string());
-    let mut db_result = client.json_query(read_query).await?;
-
     let result: f64 = match op {
         Operation::Max => {
+            #[derive(Serialize, Deserialize)]
+            struct MaxResult {
+                max: f64,
+            }
             println!(
                 "Searching for {:?} highest close price between {:?} and {:?}",
                 symbol, start_date, end_date
             );
 
-            #[derive(Serialize, Deserialize)]
-            struct MaxResult {
-                max_high: f64,
-            }
+            let qs = format!(
+                "SELECT MAX(high) FROM {} WHERE time >= '{}' and time < '{}' and \"symbol\" = '{}'",
+                bucket, start_date, end_date, symbol
+            );
+            let read_query = ReadQuery::new(qs.to_string());
+            let mut db_result = client.json_query(read_query).await?;
 
-            println!("{:#?}", db_result);
             let test = db_result
                 .deserialize_next::<MaxResult>()?
                 .series
                 .into_iter()
-                .map(|i| i.values[0].max_high)
+                .map(|i| i.values[0].max)
                 .collect::<Vec<_>>();
-                test[0]
-                
+            test[0]
         }
         Operation::Min => {
+            #[derive(Serialize, Deserialize)]
+            struct MinResult {
+                min: f64,
+            }
             println!(
                 "Searching for {:?} lowest close price between {:?} and {:?}",
                 symbol, start_date, end_date
             );
-            #[derive(Serialize, Deserialize)]
-            struct MinResult {
-                min_low: f64,
-            }
+
+            let qs = format!(
+                "SELECT MIN(low) FROM {} WHERE time >= '{}' and time < '{}' and \"symbol\" = '{}'",
+                bucket, start_date, end_date, symbol
+            );
+            let read_query = ReadQuery::new(qs.to_string());
+            let mut db_result = client.json_query(read_query).await?;
             let test = db_result
                 .deserialize_next::<MinResult>()?
                 .series
                 .into_iter()
-                .map(|i| i.values[0].min_low)
+                .map(|i| i.values[0].min)
                 .collect::<Vec<_>>();
-                test[0]
+            test[0]
         }
     };
     Ok(result)
@@ -208,15 +212,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .expect("Please set INFLUX_TOKEN environment variable to your influxDB token");
     let bucket = env::var("INFLUX_BUCKET")
         .expect("Please set INFLUX_BUCKET environment variable to your influxDB token");
+
     let client = Client::new(host, &bucket).with_token(&token);
+
     //Health check to see if we can at least communicate with database
     //if not we will bail here
     let (_build_name, _version_num) = client.ping().await?;
     let interval = Interval::_6mo;
     let symbols = vec!["AAPL".to_string(), "MSFT".to_string()];
-    let _data_vec = get_symbol_list_data(&symbols, interval).await?;
+    let data_vec = get_symbol_list_data(&symbols, interval).await?;
 
-    /*
     //Need to implement influxdb2 api to allow for streaming datapoints to the database, much faster
     {
         let mut symbol_iter = symbols.iter();
@@ -225,7 +230,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("Number of symbols in data_vec is {}", &data_vec.len());
             println!("Symbol is:  {:?}", symbol);
             for bar in bar_vec {
-                client.clone()
+                client
+                    .clone()
                     .query(
                         &BarWrapper::from((symbol.expect("Symbol Bar mismatch").clone(), bar))
                             .into_query(&bucket),
@@ -234,7 +240,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
-    */
 
     let result = query_database(
         client.clone(),
