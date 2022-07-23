@@ -1,6 +1,6 @@
 # historical_market_database
 Project that retrieves end of day data from yahoo finance and stores in influxDB
-
+```
 USAGE:
     historical_market_database --start <START> --end <END> --symbol <SYMBOL> <SUBCOMMAND>
 
@@ -14,4 +14,5 @@ OPTIONS:
 SUBCOMMANDS:
     help    Print this message or the help of the given subcommand(s)
     max     
-    min     
+    min 
+```    
