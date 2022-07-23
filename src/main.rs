@@ -102,9 +102,6 @@ impl InfluxDbWriteable for BarWrapper {
 }
 
 //This function will query the database for the provided operation, currently only MAX or MIN
-// Need to change query so that it returns that entire struct back at the matching point so that
-// the query return type is always the same.  OR make the deserializing smarter so that it knows
-// what it should expect to receive
 async fn query_database(
     client: Client,
     op: &Operation,
@@ -272,3 +269,5 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Op result is: {:?}", result);
     Ok(())
 }
+
+
