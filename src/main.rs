@@ -272,7 +272,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod tests {
-   use super::*;
+    use super::*;
     #[tokio::test]
     async fn connect_to_influxdb_test() {
         let host = env::var("INFLUX_HOST")
@@ -304,5 +304,99 @@ mod tests {
             .query(&BarWrapper::default().into_query(&bucket))
             .await
             .is_ok());
+    }
+
+    #[tokio::test]
+    async fn query_database_min_test() -> Result<(), Box<dyn std::error::Error>> {
+        let host = env::var("INFLUX_HOST")
+            .expect("Please set INFLUX_HOST environment variable to your influxDB token");
+        let token = env::var("INFLUX_TOKEN")
+            .expect("Please set INFLUX_TOKEN environment variable to your influxDB token");
+        let bucket = env::var("INFLUX_BUCKET")
+            .expect("Please set INFLUX_BUCKET environment variable to your influxDB token");
+
+        let client = Client::new(host, &bucket).with_token(&token);
+        let interval = Interval::_6mo;
+        let symbols = vec!["AAPL".to_string(), "MSFT".to_string()];
+        let data_vec = get_symbol_list_data(&symbols, interval).await?;
+
+        //Need to implement influxdb2 api to allow for streaming datapoints to the database, much faster
+        {
+            let mut symbol_iter = symbols.iter();
+            for bar_vec in &data_vec {
+                let symbol = symbol_iter.next();
+                println!("Number of symbols in data_vec is {}", &data_vec.len());
+                println!("Symbol is:  {:?}", symbol);
+                
+                for bar in bar_vec {
+                    client
+                        .clone()
+                        .query(
+                            &BarWrapper::from((symbol.expect("Symbol Bar mismatch").clone(), bar))
+                                .into_query(&bucket),
+                        )
+                        .await?;
+                }
+            }
+        }
+
+        let result = query_database(
+            client.clone(),
+            &Operation::Min,
+            &bucket,
+            "MSFT",
+            NaiveDateTime::parse_from_str("2022-06-10 00:00:00", "%Y-%m-%d %H:%M:%S")?,
+            NaiveDateTime::parse_from_str("2022-07-12 00:00:00", "%Y-%m-%d %H:%M:%S")?,
+        )
+        .await?;
+        assert_eq!(result, (DateTime::<Utc>::from_utc(NaiveDateTime::parse_from_str("2022-06-14 13:30:00", "%Y-%m-%d %H:%M:%S")?, Utc), 241.5099945068359));
+        Ok(())
+    }
+    #[tokio::test]
+    async fn query_database_max_test() -> Result<(), Box<dyn std::error::Error>> {
+        let host = env::var("INFLUX_HOST")
+            .expect("Please set INFLUX_HOST environment variable to your influxDB token");
+        let token = env::var("INFLUX_TOKEN")
+            .expect("Please set INFLUX_TOKEN environment variable to your influxDB token");
+        let bucket = env::var("INFLUX_BUCKET")
+            .expect("Please set INFLUX_BUCKET environment variable to your influxDB token");
+
+        let client = Client::new(host, &bucket).with_token(&token);
+        let interval = Interval::_6mo;
+        let symbols = vec!["AAPL".to_string(), "MSFT".to_string()];
+        let data_vec = get_symbol_list_data(&symbols, interval).await?;
+
+        //Need to implement influxdb2 api to allow for streaming datapoints to the database, much faster
+        {
+            let mut symbol_iter = symbols.iter();
+            for bar_vec in &data_vec {
+                let symbol = symbol_iter.next();
+                println!("Number of symbols in data_vec is {}", &data_vec.len());
+                println!("Symbol is:  {:?}", symbol);
+                
+                for bar in bar_vec {
+                    client
+                        .clone()
+                        .query(
+                            &BarWrapper::from((symbol.expect("Symbol Bar mismatch").clone(), bar))
+                                .into_query(&bucket),
+                        )
+                        .await?;
+                }
+            }
+        }
+
+        let result = query_database(
+            client.clone(),
+            &Operation::Max,
+            &bucket,
+            "MSFT",
+            NaiveDateTime::parse_from_str("2022-06-10 00:00:00", "%Y-%m-%d %H:%M:%S")?,
+            NaiveDateTime::parse_from_str("2022-07-12 00:00:00", "%Y-%m-%d %H:%M:%S")?,
+        )
+        .await?;
+        println!("{:#?}", result);
+        assert_eq!(result, (DateTime::<Utc>::from_utc(NaiveDateTime::parse_from_str("2022-07-07 13:30:00", "%Y-%m-%d %H:%M:%S")?, Utc), 269.05999755859375));
+        Ok(())
     }
 }
