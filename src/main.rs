@@ -208,7 +208,7 @@ async fn get_symbol_list_data(
 
 fn get_all_stock_symbols(path: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     use std::fs::File;
-    use std::io::{BufRead, BufReader};
+    use std::io::{BufRead, BufReader, Write};
     let lines = BufReader::new(File::open(path)?)
         .lines()
         .skip(1)
@@ -222,11 +222,6 @@ fn get_all_stock_symbols(path: &str) -> Result<Vec<String>, Box<dyn std::error::
             .collect()
     })
     .collect();
-    let mut processed_file = File::create("processed_symbols.txt")?;
-    stock_symbols
-    .iter()
-    .for_each(|symbol| writeln!(&mut processed_file, symbol)?);
-    //println!("{:#?}", stock_symbols);
     Ok(stock_symbols)
 }
 
