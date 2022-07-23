@@ -1,18 +1,17 @@
-//#![deny(warnings)]
-//#![warn(clippy::all, clippy::restriction, clippy::pedantic, clippy::nursery)]
+#![deny(warnings)]
+#![warn(clippy::all, clippy::pedantic, clippy::nursery)]
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 
-use futures::prelude::*;
+//use futures::prelude::*;
 use influxdb::InfluxDbWriteable;
 use influxdb::{Client, ReadQuery, WriteQuery};
 use std::env;
-use yahoo_finance::{history, Interval, Timestamped};
+use yahoo_finance::{history, Interval};
 
 use chrono::{DateTime, NaiveDateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-/// Search for a pattern in a file and display the lines that contain it.
 #[derive(Parser, Debug)]
 #[clap(about, version, author)]
 struct Cli {
@@ -39,6 +38,7 @@ enum Operation {
     Min,
 }
 
+//This struct will hold the result from a database query
 #[derive(Debug, InfluxDbWriteable, Serialize, Deserialize)]
 struct StockPrice {
     time: DateTime<Utc>,
@@ -51,18 +51,19 @@ struct StockPrice {
     symbol: String,
 }
 
+//Can't implement traits on structs I don't own, wrap Bar
 #[derive(Debug)]
 struct BarWrapper(String, yahoo_finance::Bar);
 
 impl From<(String, yahoo_finance::Bar)> for BarWrapper {
     fn from(pair: (String, yahoo_finance::Bar)) -> Self {
-        BarWrapper(pair.0, pair.1)
+        Self(pair.0, pair.1)
     }
 }
 
 impl From<(String, &yahoo_finance::Bar)> for BarWrapper {
     fn from(bar: (String, &yahoo_finance::Bar)) -> Self {
-        BarWrapper(bar.0, *bar.1)
+        Self(bar.0, *bar.1)
     }
 }
 
@@ -76,7 +77,7 @@ impl Default for BarWrapper {
                 high: Default::default(),
                 low: Default::default(),
                 close: Default::default(),
-                volume: Default::default(),
+                volume: std::option::Option::default(),
             },
         )
     }
@@ -100,6 +101,10 @@ impl InfluxDbWriteable for BarWrapper {
     }
 }
 
+//This function will query the database for the provided operation, currently only MAX or MIN
+// Need to change query so that it returns that entire struct back at the matching point so that 
+// the query return type is always the same.  OR make the deserializing smarter so that it knows
+// what it should expect to receive
 async fn query_database(
     client: Client,
     op: &Operation,
@@ -115,38 +120,37 @@ async fn query_database(
     let read_query = ReadQuery::new(qs.to_string());
     let mut db_result = client.json_query(read_query).await?;
 
-    let result: Vec<f64>;
-
-    match op {
+    let result: Vec<f64> = match op {
         Operation::Max => {
             println!(
                 "Searching for {:?} highest close price between {:?} and {:?}",
                 symbol, start_date, end_date
             );
 
-            result = db_result
+         db_result
                 .deserialize_next::<StockPrice>()?
                 .series
                 .into_iter()
                 .map(|i| i.values[0].high)
-                .collect::<Vec<_>>();
+                .collect::<Vec<_>>()
         }
         Operation::Min => {
             println!(
                 "Searching for {:?} lowest close price between {:?} and {:?}",
                 symbol, start_date, end_date
             );
-            result = db_result
+            db_result
                 .deserialize_next::<StockPrice>()?
                 .series
                 .into_iter()
                 .map(|i| i.values[0].low)
-                .collect::<Vec<_>>();
+                .collect::<Vec<_>>()
         }
-    }
+    };
     Ok(result)
 }
 
+// queries yahoo_finance for the bars it has in the provided interval
 async fn get_symbol_data(
     symbol: &str,
     interval: Interval,
@@ -154,13 +158,14 @@ async fn get_symbol_data(
     Ok(history::retrieve_interval(symbol, interval).await?)
 }
 
+//This function gets all the bars for a given interval for all the provided symbols
 async fn get_symbol_list_data(
     symbols: &[String],
     interval: Interval,
 ) -> Result<Vec<Vec<yahoo_finance::Bar>>, Box<dyn std::error::Error>> {
     let mut symbols_data: Vec<Vec<yahoo_finance::Bar>> = Vec::with_capacity(symbols.len());
     for symbol in symbols.iter() {
-        symbols_data.push(get_symbol_data(symbol, interval).await?)
+        symbols_data.push(get_symbol_data(symbol, interval).await?);
     }
     Ok(symbols_data)
 }
@@ -185,27 +190,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         })?;
 
     let host =
-        env::var("INFLUX_HOST").unwrap_or("https://us-east-1-1.aws.cloud2.influxdata.com".into());
-    let org = env::var("INFLUX_ORG").unwrap_or("test".into());
-    let token = env::var("INFLUX_TOKEN").unwrap_or(
-        "ktA-cBpdbqfGNdGs5KiZ3JYk4uE5TxtsnfHu6HGnM109vVG323J-J-5VnBFZA0KlAjsFmosmRpKJgJni_gi9ww=="
-            .into(),
-    );
-    let bucket = env::var("INFLUX_BUCKET").unwrap_or("i".into());
-
+        env::var("INFLUX_HOST").expect("Please set INFLUX_HOST environment variable to your influxDB token");
+    //let _org = env::var("INFLUX_ORG").expect("Please set INFLUX_ORG environment variable to your influxDB token");
+    let token = env::var("INFLUX_TOKEN").expect("Please set INFLUX_TOKEN environment variable to your influxDB token");
+    let bucket = env::var("INFLUX_BUCKET").expect("Please set INFLUX_BUCKET environment variable to your influxDB token");
     let client =
-        Client::new("https://us-east-1-1.aws.cloud2.influxdata.com", &bucket).with_token(&token);
-    println!("database_name is: {:?}", client.database_name());
-    let (build_name, version_num) = client.ping().await?;
-    println!(
-        "Build Name: {:?}\nVersion Num is: {:?}",
-        build_name, version_num
-    );
-    
+        Client::new(host, &bucket).with_token(&token);
+    //Health check to see if we can at least communicate with database
+    //if not we will bail here
+    let (_build_name, _version_num) = client.ping().await?;   
     let interval = Interval::_6mo;
     let symbols = vec!["AAPL".to_string(), "MSFT".to_string()];
     let data_vec = get_symbol_list_data(&symbols, interval).await?;
-    /*
+
+    //Need to implement influxdb2 api to allow for streaming datapoints to the database, much faster
     {
         let mut symbol_iter = symbols.iter();
         for bar_vec in &data_vec {
@@ -221,9 +219,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .await?;
             }
         }
-    }
-    */
-    
+    }   
 
     let result = query_database(
       client.clone(),
