@@ -270,4 +270,39 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+   use super::*;
+    #[tokio::test]
+    async fn connect_to_influxdb_test() {
+        let host = env::var("INFLUX_HOST")
+            .expect("Please set INFLUX_HOST environment variable to your influxDB token");
+        let token = env::var("INFLUX_TOKEN")
+            .expect("Please set INFLUX_TOKEN environment variable to your influxDB token");
+        let bucket = env::var("INFLUX_BUCKET")
+            .expect("Please set INFLUX_BUCKET environment variable to your influxDB token");
 
+        let client = Client::new(host, &bucket).with_token(&token);
+
+        //Health check to see if we can at least communicate with database
+        //if not we will bail here
+        assert!(client.ping().await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn write_to_influxdb_test() {
+        let host = env::var("INFLUX_HOST")
+            .expect("Please set INFLUX_HOST environment variable to your influxDB token");
+        let token = env::var("INFLUX_TOKEN")
+            .expect("Please set INFLUX_TOKEN environment variable to your influxDB token");
+        let bucket = env::var("INFLUX_BUCKET")
+            .expect("Please set INFLUX_BUCKET environment variable to your influxDB token");
+
+        let client = Client::new(host, &bucket).with_token(&token);
+
+        assert!(client
+            .query(&BarWrapper::default().into_query(&bucket))
+            .await
+            .is_ok());
+    }
+}
