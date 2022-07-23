@@ -222,6 +222,10 @@ fn get_all_stock_symbols(path: &str) -> Result<Vec<String>, Box<dyn std::error::
             .collect()
     })
     .collect();
+    let mut processed_file = File::create("processed_symbols.txt")?;
+    stock_symbols
+    .iter()
+    .for_each(|symbol| writeln!(&mut processed_file, symbol)?);
     //println!("{:#?}", stock_symbols);
     Ok(stock_symbols)
 }
