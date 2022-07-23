@@ -202,7 +202,7 @@ async fn get_symbol_list_data(
     let mut symbols_data: Vec<Vec<yahoo_finance::Bar>> = Vec::with_capacity(symbols.len());
     for symbol in symbols.iter() {
         if let Ok(symbol_data) = get_symbol_data(symbol, interval).await {
-         symbols_data.push(symbol_data);
+            symbols_data.push(symbol_data);
         };
     }
     Ok(symbols_data)
@@ -214,16 +214,18 @@ fn get_all_stock_symbols(path: &str) -> Result<Vec<String>, Box<dyn std::error::
     let lines = BufReader::new(File::open(path)?)
         .lines()
         .skip(1)
-        .map(|x| x.unwrap())
+        .map(std::result::Result::unwrap)
         .collect::<Vec<String>>()
         .join("\n");
-    let stock_symbols: Vec<String> = lines.lines().map(|line| {
-        line.split(',')
-            .step_by(11)
-            .map(|symbol| symbol.to_string())
-            .collect()
-    })
-    .collect();
+    let stock_symbols: Vec<String> = lines
+        .lines()
+        .map(|line| {
+            line.split(',')
+                .step_by(11)
+                .map(std::string::ToString::to_string)
+                .collect()
+        })
+        .collect();
     Ok(stock_symbols)
 }
 
@@ -260,28 +262,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (_build_name, _version_num) = client.ping().await?;
     let interval = Interval::_6mo;
     let symbols = get_all_stock_symbols("nasdaq_screener_1658367185632.csv")?;
-    let _data_vec = get_symbol_list_data(&symbols, interval).await?;
-    /*
-
-        //Need to implement influxdb2 api to allow for streaming datapoints to the database, much faster
-        {
-            let mut symbol_iter = symbols.iter();
-            for bar_vec in &data_vec {
-                let symbol = symbol_iter.next();
-                println!("Number of symbols in data_vec is {}", &data_vec.len());
-                println!("Symbol is:  {:?}", symbol);
-                for bar in bar_vec {
-                    client
-                        .clone()
-                        .query(
-                            &BarWrapper::from((symbol.expect("Symbol Bar mismatch").clone(), bar))
-                                .into_query(&bucket),
-                        )
-                        .await?;
-                }
+    let data_vec = get_symbol_list_data(&symbols, interval).await?;
+    //Need to implement influxdb2 api to allow for streaming datapoints to the database, much faster
+    {
+        let mut symbol_iter = symbols.iter();
+        for bar_vec in &data_vec {
+            let symbol = symbol_iter.next();
+            println!("Number of symbols in data_vec is {}", &data_vec.len());
+            println!("Symbol is:  {:?}", symbol);
+            for bar in bar_vec {
+                client
+                    .clone()
+                    .query(
+                        &BarWrapper::from((symbol.expect("Symbol Bar mismatch").clone(), bar))
+                            .into_query(&bucket),
+                    )
+                    .await?;
             }
         }
-    */
+    }
     let result = query_database(
         client.clone(),
         &args.op,
